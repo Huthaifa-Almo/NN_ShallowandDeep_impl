@@ -5,8 +5,9 @@ from sklearn.model_selection import train_test_split
 
 class MLP:
     # initialize the MLP parameters
-    def __init__(self, layers_dim, learning_rate=0.01, num_iterations=3000, print_cost=False):
+    def __init__(self, layers_dim, lambd, learning_rate=0.01, num_iterations=3000, print_cost=False):
         self.layers_dim = layers_dim   # number of layers and number of neurons on each
+        self.lambd = lambd  # regularization parameter
         self.learning_rate = learning_rate  # the hyperparameter that used on updating the gradients
         self.num_iterations = num_iterations  # the number of epochs that will be used
         self.print_cost = print_cost  # optional printing cost after specific number of iteration
@@ -17,7 +18,7 @@ class MLP:
         L = len(layer_dims)
         for l in range(1, L):
             # create each layers weights with random numbers and biases with zeros
-            parameters['W' + str(l)] = np.random.randn(layer_dims[l], layer_dims[l - 1]) * 0.01
+            parameters['W' + str(l)] = np.random.randn(layer_dims[l], layer_dims[l - 1]) * np.sqrt(1/(layer_dims[l - 1]))
             parameters['b' + str(l)] = np.zeros((layer_dims[l], 1))
         return parameters
 
@@ -58,10 +59,19 @@ class MLP:
         return AL, caches
 
     # computing cost function
-    def compute_cost(self, AL, Y):
+    def compute_cost(self, AL, Y, parameters, lambd):
         m = Y.shape[1]
         cost = (-1 / m) * np.sum(np.multiply(Y, np.log(AL)) + np.multiply((1 - Y), np.log(1 - AL)))
         cost = np.squeeze(cost)
+
+        L = len(parameters) // 2
+        regularization = 0
+
+        for l in range(L):
+            regularization += np.sum(np.square(parameters["W" + str(l + 1)]))
+
+        L2_regularization_cost = (lambd / (2 * m)) * regularization
+        cost = cost + L2_regularization_cost
         return cost
 
     # sigmoid derivative
@@ -73,26 +83,26 @@ class MLP:
         return dA * (activation_cache > 0)
 
     # backward activation
-    def activation_backward(self, dA, cache, activation):
+    def activation_backward(self, dA, cache, activation, lambd):
         linear_cache, activation_cache = cache
         if activation == "relu":
             dZ = self.relu_backward(dA, activation_cache)
             A_prev, W, b = linear_cache
             m = A_prev.shape[1]
-            dW = (1 / m) * np.dot(dZ, A_prev.T)
+            dW = (1 / m) * np.dot(dZ, A_prev.T) + (lambd/m) * W
             db = (1 / m) * np.sum(dZ, axis=1, keepdims=True)
             dA_prev = np.dot(W.T, dZ)
         elif activation == "sigmoid":
             dZ = self.sigmoid_backward(dA, activation_cache)
             A_prev, W, b = linear_cache
             m = A_prev.shape[1]
-            dW = (1 / m) * np.dot(dZ, A_prev.T)
+            dW = (1 / m) * np.dot(dZ, A_prev.T) + (lambd/m) * W
             db = (1 / m) * np.sum(dZ, axis=1, keepdims=True)
             dA_prev = np.dot(W.T, dZ)
         return dA_prev, dW, db
 
     # backward model
-    def model_backward(self, AL, Y, caches):
+    def model_backward(self, AL, Y, caches, lambd):
         grads = {}
         L = len(caches)
         m = AL.shape[1]
@@ -101,10 +111,14 @@ class MLP:
         current_cache = caches[L - 1]
         grads["dA" + str(L - 1)], grads["dW" + str(L)], grads["db" + str(L)] = self.activation_backward(dAL,
                                                                                                         current_cache,
-                                                                                                        "sigmoid")
+                                                                                                        "sigmoid",
+                                                                                                        lambd)
         for l in reversed(range(L - 1)):
             current_cache = caches[l]
-            dA_prev_temp, dW_temp, db_temp = self.activation_backward(grads["dA" + str(l + 1)], current_cache, "relu")
+            dA_prev_temp, dW_temp, db_temp = self.activation_backward(grads["dA" + str(l + 1)],
+                                                                      current_cache,
+                                                                      "relu",
+                                                                      lambd)
             grads["dA" + str(l)] = dA_prev_temp
             grads["dW" + str(l + 1)] = dW_temp
             grads["db" + str(l + 1)] = db_temp
@@ -124,8 +138,8 @@ class MLP:
         parameters = self.initialize(layers_dim)
         for i in range(0, self.num_iterations):
             AL, caches = self.model_forward(X, parameters)
-            cost = self.compute_cost(AL, Y)
-            grads = self.model_backward(AL, Y, caches)
+            cost = self.compute_cost(AL, Y, parameters, self.lambd)
+            grads = self.model_backward(AL, Y, caches, self.lambd)
             parameters = self.update_parameters(parameters, grads, self.learning_rate)
             if self.print_cost and i % 100 == 0:
                 print("Cost after iteration %i: %f" % (i, cost))
@@ -188,7 +202,8 @@ x_train, x_test, y_train, y_test = train_test_split(
 # define number of layers and the number of neuron on each layers
 layers_dim = np.array([2, 256, 1])
 # create an instance from the model
-model = MLP(layers_dim, learning_rate=0.1, num_iterations=3000, print_cost=True)
+# try different hyberparameters and monitor the results
+model = MLP(layers_dim, lambd=0.7, learning_rate=0.03, num_iterations=10000, print_cost=True)
 # fitting the model with the training dataset
 parameters = model.fit(x_train.T, y_train.T)
 # predict the result using train and test dataset
